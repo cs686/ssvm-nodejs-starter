@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8" />
+    <title>文档引用功能</title>
+    <link rel="stylesheet" href="https://unpkg.com/element-ui/lib/theme-chalk/index.css">
+    <script type="text/javascript" src="../pluginBase.js"></script>
+    <!--  <script type="text/javascript" src="doc_ref.js"></script>-->
+    <script type="text/javascript" src="https://unpkg.com/jquery@3.4.1/dist/jquery.js"></script>
+    <style lang="scss">
+        .space-and-document-tree {
+            border-top: 2px solid #ebecf0;
+            border-bottom: 2px solid #ebecf0;
+            padding: 15px 0;
+            margin: 0 20px 20px;
+        }
+
+        .select-space-content {
+            padding: 0 15px;
+            border-right: 2px solid #ebecf0;
+        }
+
+        .select-space-content label {
+            width: 100%;
+            display: block;
+            padding-bottom: 10px;
+            margin-bottom: 10px;
+            border-bottom: 2px solid #ebecf0;
+        }
+
+        .select-space-list {
+            height: 300px;
+            overflow-y: auto;
+        }
+
+        .select-document-content {
+            padding-left: 15px;
+        }
+
+        .select-document-content label {
+            width: 100%;
+            display: block;
+            padding-bottom: 10px;
+            margin-bottom: 10px;
+            border-bottom: 2px solid #ebecf0;
+        }
+
+        .select-document-list {
+            height: 300px;
+            overflow-y: auto;
+        }
+
+        .select-document-data {
+            margin-left: 20px;
+        }
+
+        .el-tree-node.is-current>.el-tree-node__content {
+
+            background-color: #c2d6ea !important;
+
+        }
+    </style>
+</head>
+
+<body>
+    <div id="app">
+        <div>
+            <div class="select-document-data" style="margin-bottom: 10px">请选择要引用的文档或者文档段落</div>
+            <div class="space-and-document-tree">
+                <el-row>
+                    <el-col :span="8" class="select-space-content">
+                        <label>选择空间</label>
+                        <div class="select-space-list" v-loading="loadingSpace">
+                            <el-tree :props="props" :data="spaceData" :default-expanded-keys="defaultSpaceExpandedIds"
+                                :current-node-key="defaultSpaceSelectId" node-key="prefix_id" ref="entryTree"
+                                :empty-text="spaceEmptyText" highlight-current :expand-on-click-node="false"
+                                @node-click="handleSpaceClick"></el-tree>
+                        </div>
+                    </el-col>
+                    <el-col :span="8" class="select-space-content">
+                        <label>选择文档</label>
+                        <div class="select-space-list" v-loading="loadingDocument">
+                            <el-tree v-if="showDocumentTree" :props="documentProps" :empty-text="documentEmptyText"
+                                :data="documentData" node-key="prefix_id" ref="documentTree" highlight-current
+                                :expand-on-click-node="false" @node-click="handleDocumentClick"></el-tree>
+                        </div>
+                    </el-col>
+                    <el-col :span="8" class="select-document-content">
+                        <!--                    <label>选择文档段落</label>-->
+                        <div style="margin-top:-6px">
+                            <el-tabs v-model="paragraphType" @tab-click="handleClick">
+                                <el-tab-pane label="段落" name="first"></el-tab-pane>
+                                <el-tab-pane label="参数" name="second"></el-tab-pane>
+                            </el-tabs>
+                        </div>
+                        <div class="select-document-list" v-loading="loadingDocumentParagraph">
+                            <el-tree v-if="showContentTree && paragraphType == 'first'" :props="contentProps"
+                                :empty-text="contentEmptyText" :data="paragraphData" node-key="prefix_id"
+                                ref="contentTree" highlight-current :expand-on-click-node="false"
+                                @node-click="handleContentClick"></el-tree>
+
+                            <el-tree v-if="showContentTree && paragraphType == 'second'"
+                                :empty-text="parameterEmptyText" :data="paragraphParameterData" highlight-current
+                                @node-click="handleContentClick">
+                                <span class="el-tree-node__label" slot-scope="{ node, data }">
+                                    {{ data.label }}：
+                                    <span>
+                                        {{ data.content }}
+                                    </span>
+                                </span>
+                            </el-tree>
+                        </div>
+                    </el-col>
+                </el-row>
+            </div>
+            <div style="padding:0 20px">
+                <el-checkbox v-model="sync_type">仅复制内容，不生成引用关系</el-checkbox>
+            </div>
+        </div>
+    </div>
+    <script src="https://unpkg.com/vue/dist/vue.js"></script>
+    <!-- 引入组件库 -->
+    <script src="https://unpkg.com/element-ui/lib/index.js"></script>
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/lodash@4.17.15/lodash.min.js"></script>
+
+    <script>
+        let selectType = 'first'
+        window.Asc.plugin.init = function () {
+            window.Asc.scope.RefVm = new Vue({
+                el: '#app',
+                data() {
+                    return {
+                        sync_type: false,
+                        paragraphType: "first",
+                        props: {
+                            label: 'name',
+                            children: 'children',
+                            isLeaf: 'leaf'
+                        },
+                        documentProps: {
+                            label: 'title'
+                        },
+                        contentProps: {
+                            label: 'title'
+                        },
+                        defaultSpaceExpandedIds: [],
+                        defaultSpaceSelectId: 0,
+                        loadingSpace: false,
+                        spaceData: [],
+                        documentData: [],
+                        paragraphData: [],
+                        paragraphParameterData: [],
+                        selected: {
+                            type: 'Document',
+                            data: { id: 0 },
+                            title: '',
+                            paragraph_id: 0,
+                            parameter_id: 0,
+                        },
+                        loadingDocument: false,
+                        loadingDocumentParagraph: false,
+                        showDocumentTree: false,
+                        showContentTree: false,
+                        spaceEmptyText: '',
+                        documentEmptyText: '暂无文档',
+                        contentEmptyText: '暂无文档内容',
+                        parameterEmptyText: '暂无文档参数',
+                        selectNodeName: '',
+                        selectDocument: {},
+                        host: `${window.frames.parent.parent.location.origin}`,
+                        space_url: "/lbp/onlyoffice/space/get_list",
+                        document_url: "/lbp/onlyoffice/space/lazy_document_list",
+                        document_paragraph_url: "/lbp/onlyoffice/space/lazy_document_paragraph_list",
+                        list_url: "/lbp/work/document/paragraph_params_list",
+                        currentUser: {},
+                        currentDocumentId: 0,
+                        selectDocumentId: 0
+                    }
+                },
+                created() {
+                    this.currentUser = window.frames.parent.parent.config.editorConfig.user;
+                    this.currentDocumentId = window.frames.parent.parent.config.document.info.id;
+                    this.loadSpaceTree()
+                },
+                methods: {
+                    async loadSpaceTree() {
+                        this.loadingSpace = true
+                        try {
+                            let { data, status } = await axios.get(`${this.host}${this.space_url}`, { params: this.currentUser })
+                            if (status === 200) {
+                                this.spaceData = data.data.data;
+                                this.defaultSpaceExpandedIds = data.data.default_expanded_ids;
+                            }
+                        } catch (e) {
+                            this.$message({
+                                type: "error",
+                                message: "数据加载失败，请联系IT小哥"
+                            });
+                        }
+                        this.loadingSpace = false;
+                    },
+                    async handleSpaceClick(data) {
+                        this.loadingDocument = true;
+                        let response = await axios.get(`${this.host}${this.document_url}`, {
+                            params: {
+                                space_id: data.id,
+                                current_document_id: this.currentDocumentId
+                            }
+                        });
+                        this.loadingDocument = false;
+                        if (response.status == "200") {
+                            this.documentData = response.data.data;
+                            this.showDocumentTree = true;
+                        } else {
+                            this.$message({
+                                type: "error",
+                                message: "数据加载失败，请联系IT小哥"
+                            });
+                        }
+                    },
+                    async getDocumentParameters(document_id) {
+                        let { data, status } = await axios.get(`${this.host}${this.list_url}?document_id=${document_id}`)
+                        if (status === 200) {
+                            this.paragraphParameterData = data.data;
+                        }
+                    },
+                    async getDocumentParagraph(document_id) {
+                        let { status, data } = await axios.get(`${this.host}${this.document_paragraph_url}?document_id=${document_id}`);
+                        if (status === 200) {
+                            this.paragraphData = data.data;
+                        }
+                    },
+                    async handleClick(tab, event) {
+                        selectType = tab.name
+                        if (this.selectDocumentId) {
+                            if (tab.name === 'first') {
+                                await this.getDocumentParagraph(this.selectDocumentId)
+                            } else {
+                                await this.getDocumentParameters(this.selectDocumentId)
+                            }
+                        }
+                    },
+                    async handleDocumentClick(data) {
+                        //可以获取节点的数据进行下步操作  文档id: data.id
+                        this.selectDocumentId = data.id
+                        this.showContentTree = true
+                        this.loadingDocumentParagraph = true;
+                        this.selected = { type: "Document", data: data };
+                        this.selectDocument = data;
+                        if (this.paragraphType === 'first') {
+                            await this.getDocumentParagraph(data.id)
+                        } else {
+                            await this.getDocumentParameters(data.id)
+                        }
+
+                        this.loadingDocumentParagraph = false;
+                    },
+                    handleContentClick(data) {
+                        let isParagraph = this.paragraphType === 'first';
+                        this.selected = {
+                            type: isParagraph ? "DocumentParagraph" : "DocumentParameter",
+                            data: data,
+                            title: isParagraph ? data.title : data.label,
+                            paragraph_id: isParagraph ? data.id : 0,
+                            parameter_id: isParagraph ? 0 : data.id,
+                            document_id: data.document_id
+                        };
+                    }
+                }
+            })
+        }
+        window.Asc.plugin.button = function (id) {
+            const vm = window.Asc.scope.RefVm
+            if (id === 0 && vm.$data.selected.data.content) {
+                setTimeout(dropOtherUser(), 3000)
+                addHtmlContent(
+                    vm.$data.selected.data.content,
+                    vm.$data.selected.title,
+                    vm.$data.selected.paragraph_id,
+                    vm.$data.selected.document_id,
+                    vm.$data.selected.parameter_id,
+                    vm.$data.sync_type ? "2" : "1"
+                )
+            } else {
+                this.executeCommand("close", "");
+            }
+        };
+
+        async function addHtmlContent(html, title, paragraph_id, document_id, parameter_id, sync_type) {
+            let isParagraph = selectType == 'first';
+            const pluginApi = window.Asc.plugin
+            let Api = window.parent.DE.controllers.DocumentHolder.api
+            const type = 1;
+            const properties = {
+                "Id": 100,
+                "Tag": isParagraph ? `1_${document_id}_${paragraph_id}_${sync_type}` : `0_${document_id}_${parameter_id}_${sync_type}`,
+                "Lock": 3,
+                "Alias": `${title}`
+            };
+            let contentControl = Api.pluginMethod_AddContentControl(type, properties)
+            Api.pluginMethod_SelectContentControl(contentControl.InternalId)
+            let contentPro = Api.asc_GetContentControlProperties()
+            let res = Api.pluginMethod_PasteHtml(html)
+            if (sync_type == "1") {
+                contentPro.Kf = isParagraph ? 1 : 0
+                console.log(contentPro)
+                Api.asc_SetContentControlProperties(contentPro, contentControl.InternalId)
+            }
+            pluginApi.executeCommand("close", "");
+        }
+
+        function dropOtherUser() {
+            var xhr = new XMLHttpRequest();
+            xhr.open("POST", `${window.frames.parent.parent.location.origin}/onlyoffice/5.5.0-165/coauthoring/CommandService.ashx`, true);
+            xhr.setRequestHeader('content-type', 'application/json');
+            var sendData = {
+                "c": "drop",
+                "key": `${window.frames.parent.parent.config.document.key}`,
+                "users": ["333"]
+            };
+            xhr.send(JSON.stringify(sendData));
+
+        }
+
+        function inputChineseChar() {
+            const pluginApi = window.Asc.plugin
+            return new Promise(resolve => {
+                pluginApi.executeMethod("InputText", [`。、【】（）？》《~`]);
+                setTimeout(resolve(1), 1000)
+            })
+        }
+    </script>
+
+</html>
